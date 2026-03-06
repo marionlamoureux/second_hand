@@ -1,0 +1,41 @@
+# Second-hand Kiabi scrapers + pipeline
+# Deploy: databricks bundle deploy
+# Run scraper job: databricks bundle run kiabi_scraper_job
+# Run pipeline: databricks bundle run kiabi_etl
+
+bundle:
+  name: second-hand
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog for tables and volumes
+    default: nef_catalog
+  schema:
+    description: Schema for pipeline tables and volume
+    default: second_hand
+  warehouse_id:
+    description: SQL warehouse for dashboards / ad-hoc
+    default: "beb00aeaaa803c3e"
+  # Volume path used by scrapers and pipeline (catalog.schema.volume_name)
+  landing_volume:
+    default: kiabi_landing
+  # Pipeline schema metadata volume (for Auto Loader)
+  pipeline_metadata_schema:
+    default: kiabi_etl_metadata
+  # Volume for downloaded listing images (for later image analysis)
+  images_volume:
+    default: kiabi_images
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://fevm-nef.cloud.databricks.com
+    variables:
+      catalog: nef_catalog
+      schema: second_hand
+      landing_volume: kiabi_landing

@@ -1,0 +1,108 @@
+# Job: run scrapers for Leboncoin, Vinted, Facebook, eBay, Label Emmaüs (Kiabi brand)
+# Uses serverless compute + environment for pip deps.
+# With --demo: writes synthetic data when live sites block. eBay needs EBAY_APP_ID for real scrape.
+resources:
+  jobs:
+    kiabi_scraper_job:
+      name: "[${bundle.target}] Kiabi scrapers - Leboncoin, Vinted, Facebook, eBay, Label Emmaüs"
+      description: "Scrapes Kiabi brand items from Leboncoin, Vinted, Facebook, eBay, Label Emmaüs and writes JSON to the landing volume. Use demo mode when blocked."
+      tasks:
+        - task_key: scrape_leboncoin
+          environment_key: scraper_env
+          spark_python_task:
+            python_file: ../src/scrapers/leboncoin_scraper.py
+            parameters:
+              - "--brand"
+              - "kiabi"
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/leboncoin"
+              - "--demo"
+        - task_key: scrape_vinted
+          environment_key: scraper_env
+          spark_python_task:
+            python_file: ../src/scrapers/vinted_scraper.py
+            parameters:
+              - "--brand"
+              - "kiabi"
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/vinted"
+              - "--demo"
+        - task_key: scrape_facebook
+          environment_key: scraper_env
+          spark_python_task:
+            python_file: ../src/scrapers/facebook_scraper.py
+            parameters:
+              - "--brand"
+              - "kiabi"
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/facebook"
+              - "--demo"
+        - task_key: scrape_ebay
+          environment_key: scraper_env
+          spark_python_task:
+            python_file: ../src/scrapers/ebay_scraper.py
+            parameters:
+              - "--brand"
+              - "kiabi"
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/ebay"
+              - "--demo"
+        - task_key: scrape_label_emmaus
+          environment_key: scraper_env
+          spark_python_task:
+            python_file: ../src/scrapers/label_emmaus_scraper.py
+            parameters:
+              - "--brand"
+              - "kiabi"
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/label_emmaus"
+              - "--demo"
+      environments:
+        - environment_key: scraper_env
+          spec:
+            client: "4"
+            dependencies:
+              - lbc
+              - requests
+              - beautifulsoup4
+              - ebaysdk-python
+      timeout_seconds: 3600
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 8 * * ?"
+        timezone_id: "Europe/Paris"
+      tags:
+        project: second-hand
+        brand: kiabi
+
+    # Download primary listing images from gold into kiabi_images volume (for image analysis)
+    kiabi_download_images:
+      name: "[${bundle.target}] Kiabi - download listing images"
+      description: "Downloads primary_image_url from gold_kiabi_listings into the images volume. Run after pipeline. Create volume kiabi_images in the schema if needed."
+      tasks:
+        - task_key: download_images
+          environment_key: download_images_env
+          spark_python_task:
+            python_file: ../scripts/download_listing_images.py
+            parameters:
+              - "--catalog"
+              - "${var.catalog}"
+              - "--schema"
+              - "${var.schema}"
+              - "--warehouse-id"
+              - "${var.warehouse_id}"
+              - "--images-volume"
+              - "${var.images_volume}"
+              - "--skip-existing"
+      environments:
+        - environment_key: download_images_env
+          spec:
+            client: "4"
+            dependencies:
+              - databricks-sdk
+              - requests
+      timeout_seconds: 3600
+      max_concurrent_runs: 1
+      tags:
+        project: second-hand
+        brand: kiabi

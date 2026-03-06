@@ -1,0 +1,8 @@
+# Volumes are managed outside this bundle (created manually or already exist).
+# Ensure these exist in your catalog/schema:
+#   - kiabi_landing   (scrapers write JSONL here; pipeline reads from here)
+#   - kiabi_etl_metadata   (Auto Loader schema evolution for the pipeline)
+#   - kiabi_images   (image download job writes listing images here for later analysis)
+# Paths used: /Volumes/${var.catalog}/${var.schema}/kiabi_landing, .../kiabi_etl_metadata, .../kiabi_images
+resources:
+  volumes: {}
