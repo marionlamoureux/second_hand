@@ -1,0 +1,18 @@
+resources:
+  apps:
+    kiabi_second_hand_app:
+      name: "kiabi-second-hand"
+      description: "Kiabi Second-Hand Monitor – dashboard showing listings from LeBonCoin and Vinted across France."
+      source_code_path: ../app
+
+      config:
+        - name: DATABRICKS_HOST
+          value: ${workspace.host}
+        - name: WAREHOUSE_ID
+          value: ${var.warehouse_id}
+
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
