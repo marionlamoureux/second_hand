@@ -9,6 +9,11 @@ bundle:
 include:
   - resources/*.yml
 
+# Ensure pipeline transformation files are synced to the workspace on deploy
+sync:
+  include:
+    - src/kiabi_etl/transformations/*.py
+
 variables:
   catalog:
     description: Unity Catalog for tables and volumes
@@ -28,6 +33,10 @@ variables:
   # Volume for downloaded listing images (for later image analysis)
   images_volume:
     default: kiabi_images
+  # Genie space for natural language SQL
+  genie_space_id:
+    description: Genie space ID for the Kiabi Second-Hand Market Explorer
+    default: "01f119653f9018bab6ee3e6e95e1605c"
 
 targets:
   dev:

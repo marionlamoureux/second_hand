@@ -1,7 +1,11 @@
-# Spark Declarative Pipeline: Kiabi listings (bronze → silver → gold)
-# Reads from the landing volume populated by kiabi_scraper_job.
-# To reload ALL landing files (e.g. after re-upload): in the pipeline UI run an update with
-# "Reset streaming flow checkpoints" for the bronze flow, then run the pipeline again.
+# Spark Declarative Pipeline: Kiabi listings (bronze → silver → gold) + manual scraping.
+# Reads from the landing volume (scraper job + manual uploads).
+# Manual scraping: upload from local output/manual_scraping/ to the landing volume:
+#   - ebay + vestiaire CSVs → manual_scraping/listings/
+#   - essentials_bebe.csv → manual_scraping/essentials_bebe/
+#   - essentials_femme.csv (any *.csv) → manual_scraping/essentials_femme/
+# Use scripts/upload_manual_scraping.py to sync. Then run pipeline; gold_kiabi_listings and
+# gold_essentials include manual data. Run "Kiabi - download listing images" after pipeline for all sources.
 resources:
   pipelines:
     kiabi_etl:
@@ -9,6 +13,7 @@ resources:
       catalog: ${var.catalog}
       target: ${var.schema}
       libraries:
+        # Folder path must end with /** to include all files (doc: pipeline.libraries.glob)
         - glob:
             include: ../src/kiabi_etl/transformations/**
       root_path: ../src/kiabi_etl

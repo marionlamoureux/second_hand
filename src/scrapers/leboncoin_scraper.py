@@ -58,6 +58,7 @@ def _demo_rows(source: str, brand: str, count: int = 5) -> list[dict]:
             "published_at": ts,
             "scraped_at": ts,
             "primary_image_url": "",
+            "seller_id": f"demo_user_{i}",
         }
         for i, t in enumerate(templates, 1)
     ]
@@ -113,6 +114,9 @@ def _normalize(ad) -> dict:
     external_id = str(getattr(ad, "list_id", "") or "").strip()
     if not external_id and url:
         external_id = _id_from_url(url)
+    # Seller ID: available from lbc's _user_id without an extra API call.
+    # Use as unique reseller identifier (UUID from Leboncoin's owner.user_id field).
+    seller_id = str(getattr(ad, "_user_id", None) or "")
     return {
         "source": "leboncoin",
         "external_id": external_id,
@@ -126,6 +130,7 @@ def _normalize(ad) -> dict:
         "published_at": str(getattr(ad, "index_date", None) or ""),
         "scraped_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "primary_image_url": primary_image_url,
+        "seller_id": seller_id,
     }
 
 

@@ -82,7 +82,7 @@ def upload_to_volume(catalog: str, schema: str, volume: str) -> None:
         local_dir = OUTPUT_DIR / source
         if not local_dir.exists():
             continue
-        for f in local_dir.glob("*.jsonl"):
+        for f in sorted(local_dir.glob("*.jsonl")):
             volume_path = f"{base_volume}/{source}/{f.name}"
             try:
                 w.files.upload_from(volume_path, str(f), overwrite=True)

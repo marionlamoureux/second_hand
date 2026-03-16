@@ -64,6 +64,7 @@ resources:
             dependencies:
               - lbc
               - requests
+              - curl_cffi
               - beautifulsoup4
               - ebaysdk-python
       timeout_seconds: 3600
@@ -75,10 +76,11 @@ resources:
         project: second-hand
         brand: kiabi
 
-    # Download primary listing images from gold into kiabi_images volume (for image analysis)
+    # Download primary listing images from gold into kiabi_images volume (for image analysis).
+    # Includes all sources in gold_kiabi_listings: leboncoin, vinted, ebay, label_emmaus, vestiaire (incl. manual scraping).
     kiabi_download_images:
       name: "[${bundle.target}] Kiabi - download listing images"
-      description: "Downloads primary_image_url from gold_kiabi_listings into the images volume. Run after pipeline. Create volume kiabi_images in the schema if needed."
+      description: "Downloads primary_image_url from gold_kiabi_listings (all sources incl. manual ebay/vestiaire) into the images volume. Run after pipeline."
       tasks:
         - task_key: download_images
           environment_key: download_images_env
@@ -106,3 +108,135 @@ resources:
       tags:
         project: second-hand
         brand: kiabi
+
+    # Scrape search-result counts for Kiabi + competitors (LeBonCoin, Vinted, Beebs, La Redoute, etc.). Writes only to output-base (Volume).
+    competition_scraper_job:
+      name: "[${bundle.target}] Kiabi - competition search counts"
+      description: "Fetches total listing counts for Kiabi and competitor brands. Writes JSONL to landing volume (output-base only) for ingestion by silver_competition_counts pipeline."
+      tasks:
+        - task_key: scrape_competition_counts
+          environment_key: competition_env
+          spark_python_task:
+            python_file: ../src/scrapers/competition_scraper.py
+            parameters:
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/competition"
+      environments:
+        - environment_key: competition_env
+          spec:
+            client: "4"
+            dependencies:
+              - requests
+              - lbc
+              - curl_cffi
+              - playwright
+      timeout_seconds: 3600
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "Europe/Paris"
+      tags:
+        project: second-hand
+        brand: kiabi
+
+    # Scrape Kiabi "Nos essentiels" product catalog (femme, homme, fille, garçon)
+    kiabi_essentials_scraper_job:
+      name: "[${bundle.target}] Kiabi - essentials catalog scraper"
+      description: "Scrapes Kiabi Nos Essentiels product catalog (all 4 universes) and writes JSONL to the landing volume under /essentials/. Use --demo when Datadome blocks live scraping."
+      tasks:
+        - task_key: scrape_essentials
+          environment_key: essentials_env
+          spark_python_task:
+            python_file: ../src/scrapers/kiabi_essentials_scraper.py
+            parameters:
+              - "--output-base"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.landing_volume}/essentials"
+              - "--demo"
+      environments:
+        - environment_key: essentials_env
+          spec:
+            client: "4"
+            dependencies:
+              - requests
+              - beautifulsoup4
+      timeout_seconds: 1800
+      max_concurrent_runs: 1
+      tags:
+        project: second-hand
+        brand: kiabi
+
+    # Build Vector Search index on Kiabi essentials (run once / after catalog refresh)
+    kiabi_essentials_vs_index_job:
+      name: "[${bundle.target}] Kiabi - build essentials Vector Search index"
+      description: "Creates/refreshes the essentials_vs_index used by the image-matching agent. Run after the essentials scraper job."
+      tasks:
+        - task_key: build_vs_index
+          environment_key: vs_index_env
+          notebook_task:
+            notebook_path: ../notebooks/01_build_essentials_vs_index.py
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema:  "${var.schema}"
+      environments:
+        - environment_key: vs_index_env
+          spec:
+            client: "4"
+            dependencies:
+              - databricks-vectorsearch
+              - databricks-sdk
+      timeout_seconds: 1800
+      max_concurrent_runs: 1
+      tags:
+        project: second-hand
+        brand: kiabi
+
+    # Deploy image-matching agent (listing photo → closest Kiabi essential)
+    kiabi_image_matching_agent_job:
+      name: "[${bundle.target}] Kiabi - deploy image matching agent"
+      description: "Registers and deploys the MLflow agent that matches scraped listing images to Kiabi essentials catalog using Claude Sonnet 4.6 vision + Vector Search."
+      tasks:
+        - task_key: deploy_agent
+          environment_key: agent_env
+          notebook_task:
+            notebook_path: ../notebooks/02_image_matching_agent.py
+            base_parameters:
+              catalog: "${var.catalog}"
+              schema:  "${var.schema}"
+      environments:
+        - environment_key: agent_env
+          spec:
+            client: "4"
+            dependencies:
+              - mlflow>=2.16
+              - databricks-vectorsearch
+              - databricks-sdk
+              - anthropic
+              - httpx
+      timeout_seconds: 3600
+      max_concurrent_runs: 1
+      tags:
+        project: second-hand
+        brand: kiabi
+
+    # Set up Multi-Agent Supervisor (routes between KA endpoint and Genie Space)
+    kiabi_mas_setup_job:
+      name: "[${bundle.target}] Kiabi - setup Multi-Agent Supervisor"
+      description: "Deploys kiabi-strategy-multi-agent: a routing agent that combines the Knowledge Assistant (ESG/strategy docs) and the Genie Space (market data SQL). Requires kiabi-knowledge-assistant to be ONLINE first."
+      tasks:
+        - task_key: setup_mas
+          environment_key: mas_setup_env
+          spark_python_task:
+            python_file: ../scripts/setup_multi_agent.py
+      environments:
+        - environment_key: mas_setup_env
+          spec:
+            client: "4"
+            dependencies:
+              - databricks-sdk
+              - mlflow
+      timeout_seconds: 1800
+      max_concurrent_runs: 1
+      tags:
+        project: second-hand
+        brand: kiabi
+

@@ -14,9 +14,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import requests
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -66,94 +68,168 @@ def get_leboncoin_count(brand: str) -> int | None:
         return None
 
 
-def get_vinted_count(brand: str) -> int | None:
-    """Return total search result count for brand on Vinted if available; else approximate from first page."""
+
+def get_vestiaire_count(brand: str) -> int | None:
+    """Return total search result count for brand on Vestiaire Collective."""
+    import json
+    import re
     try:
-        import requests
-    except ImportError:
+        try:
+            from curl_cffi import requests as req_lib
+            session = req_lib.Session(impersonate="chrome120")
+        except ImportError:
+            import requests as req_lib
+            session = req_lib.Session()
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "fr-FR,fr;q=0.9",
+        }
+        r = session.get(
+            "https://www.vestiairecollective.com/search/",
+            params={"q": brand},
+            headers=headers,
+            timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"Vestiaire {brand!r}: HTTP {r.status_code}", file=sys.stderr)
+            return None
+
+        # Extract total from __NEXT_DATA__ JSON
+        m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', r.text, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                def _find_total(obj, depth=0):
+                    if depth > 8:
+                        return None
+                    if isinstance(obj, dict):
+                        for key in ("totalCount", "total_count", "totalItems", "totalResults", "nbHits", "total", "count"):
+                            v = obj.get(key)
+                            if isinstance(v, int) and v > 0:
+                                return v
+                        for v in obj.values():
+                            r2 = _find_total(v, depth + 1)
+                            if r2 is not None:
+                                return r2
+                    elif isinstance(obj, list):
+                        for item in obj[:5]:
+                            r2 = _find_total(item, depth + 1)
+                            if r2 is not None:
+                                return r2
+                    return None
+                total = _find_total(data)
+                if total is not None:
+                    return total
+            except Exception:
+                pass
+
+        # Fallback: regex in raw HTML
+        for pattern in (r'"totalCount"\s*:\s*(\d+)', r'"nbHits"\s*:\s*(\d+)', r'"total"\s*:\s*(\d+)'):
+            m2 = re.search(pattern, r.text)
+            if m2:
+                return int(m2.group(1))
+
         return None
+    except Exception as e:
+        print(f"Vestiaire {brand!r}: {e}", file=sys.stderr)
+        return None
+
+
+def _beebs_slug(keyword: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", keyword.lower().strip())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.replace(" ", "-").replace("'", "").replace("&", "")
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "", s)).strip("-")
+
+
+_BEEBS_CATALOG_TOTAL = 6_734_195
+
+
+def get_beebs_count(brand: str) -> int | None:
+    """Return total listing count for brand on Beebs via brand page (per-brand nbHits in HTML)."""
+    import re as _re
+    slug = _beebs_slug(brand)
+    if not slug:
+        return None
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "fr-FR,fr;q=0.9",
+    })
+    for path in (
+        f"/fr/f-brand/vetement-{slug}-seconde-main",
+        f"/fr/brand/{slug}",
+    ):
+        try:
+            r = session.get("https://www.beebs.app" + path, timeout=15)
+            if r.status_code != 200:
+                continue
+            for pattern in (r'\\"nbHits\\":\s*(\d+)', r'"nbHits":\s*(\d+)', r'nbHits[^0-9]*(\d+)'):
+                m = _re.search(pattern, r.text)
+                if m:
+                    n = int(m.group(1))
+                    if n != _BEEBS_CATALOG_TOTAL:
+                        return n
+        except Exception as e:
+            print(f"Beebs {brand!r} {path}: {e}", file=sys.stderr)
+    return None
+
+
+def get_ebay_count(brand: str, app_id: str | None = None) -> int | None:
+    """Return approximate listing count for brand on eBay France (HTML scrape, no API key needed).
+    eBay displays 'Plus de X' where X is a per-brand approximate lower bound."""
     try:
         session = requests.Session()
-        session.get("https://www.vinted.fr/", headers={"Accept-Language": "fr-FR,fr;q=0.9"}, timeout=15)
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "fr-FR,fr;q=0.9",
+        })
         r = session.get(
-            "https://www.vinted.fr/api/v2/catalog/items",
-            params={"search_text": brand, "page": 1, "per_page": 20, "order": "newest_first"},
-            headers={"Accept": "application/json", "Referer": "https://www.vinted.fr/"},
-            timeout=30,
+            "https://www.ebay.fr/sch/i.html",
+            params={"_nkw": brand, "_ipg": 1},
+            timeout=20,
         )
-        r.raise_for_status()
-        data = r.json()
-        # Vinted may expose total in catalog or pagination
-        total = (
-            data.get("total")
-            or data.get("pagination", {}).get("total_entries")
-            or data.get("catalog", {}).get("total")
-        )
-        if total is not None:
-            return int(total)
-        items = data.get("items") or data.get("catalog", {}).get("items") or []
-        if items:
-            return len(items)  # at least one page; real total not exposed
-        return 0
-    except Exception as e:
-        print(f"Vinted {brand!r}: {e}", file=sys.stderr)
-        return None
-
-
-def get_ebay_count(brand: str, app_id: str | None) -> int | None:
-    """Return total search result count for brand on eBay (France)."""
-    if not app_id:
-        return None
-    try:
-        from ebaysdk.finding import Connection
-    except ImportError:
-        return None
-    try:
-        api = Connection(appid=app_id, config_file=None)
-        response = api.execute(
-            "findItemsAdvanced",
-            {
-                "keywords": brand,
-                "paginationInput": {"pageNumber": 1, "entriesPerPage": 1},
-                "itemFilter": [{"name": "LocatedIn", "value": "FR"}],
-            },
-        )
-        if getattr(response.reply, "ack", None) != "Success":
+        if r.status_code != 200:
+            print(f"eBay {brand!r}: HTTP {r.status_code}", file=sys.stderr)
             return None
-        pag = getattr(response.reply, "paginationOutput", None)
-        if pag is None:
-            return None
-        return int(getattr(pag, "totalEntries", 0) or 0)
+        # eBay embeds the count as a numeric textSpan (French thousands: \xa0 separator)
+        spans = re.findall(r'"text"\s*:\s*"([\d\xa0\s]+)"', r.text)
+        for span in spans:
+            clean = span.strip().replace("\xa0", "").replace(" ", "")
+            if re.match(r"^\d+$", clean) and len(clean) >= 2:
+                return int(clean)
+        return None
     except Exception as e:
         print(f"eBay {brand!r}: {e}", file=sys.stderr)
         return None
 
 
-def run_counts(brands: list[tuple[str, str]], use_ebay: bool, delay: float = 1.0) -> list[dict]:
+def run_counts(brands: list[tuple[str, str]], delay: float = 1.0) -> list[dict]:
     """Run count for each (brand, category) on each marketplace. Returns list of {brand, category, marketplace, count}."""
     import time
-    app_id = os.environ.get("EBAY_APP_ID", "").strip() if use_ebay else ""
     results = []
     for brand, category in brands:
         print(f"  {brand} ({category})...", file=sys.stderr, flush=True)
         lbc_count = get_leboncoin_count(brand)
         results.append({"brand": brand, "category": category, "marketplace": "leboncoin", "count": lbc_count})
         time.sleep(delay)
-        vinted_count = get_vinted_count(brand)
-        results.append({"brand": brand, "category": category, "marketplace": "vinted", "count": vinted_count})
+        vestiaire_count = get_vestiaire_count(brand)
+        results.append({"brand": brand, "category": category, "marketplace": "vestiaire", "count": vestiaire_count})
         time.sleep(delay)
-        if use_ebay and app_id:
-            ebay_count = get_ebay_count(brand, app_id)
-            results.append({"brand": brand, "category": category, "marketplace": "ebay", "count": ebay_count})
-            time.sleep(delay)
+        beebs_count = get_beebs_count(brand)
+        results.append({"brand": brand, "category": category, "marketplace": "beebs", "count": beebs_count})
+        time.sleep(delay)
+        ebay_count = get_ebay_count(brand)
+        results.append({"brand": brand, "category": category, "marketplace": "ebay", "count": ebay_count})
+        time.sleep(delay)
     return results
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Get search result counts for Kiabi competitors on Leboncoin, Vinted, eBay")
+    ap = argparse.ArgumentParser(description="Get search result counts for Kiabi competitors on Leboncoin, Beebs, eBay")
     ap.add_argument("--output", "-o", default="", help="Write results to JSON file (and CSV if possible)")
     ap.add_argument("--output-dir", default="", help="Write JSONL for pipeline to this dir (e.g. output/competition); creates run_YYYYMMDD_HHMMSS.jsonl")
-    ap.add_argument("--no-ebay", action="store_true", help="Skip eBay (no EBAY_APP_ID needed)")
     ap.add_argument("--kids-only", action="store_true", help="Only kids brands")
     ap.add_argument("--women-only", action="store_true", help="Only women's apparel brands")
     args = ap.parse_args()
@@ -170,29 +246,31 @@ def main():
                 seen.add((b, "women"))
 
     print("Competition search counts (Kiabi competitors)", file=sys.stderr)
-    print("Marketplaces: Leboncoin, Vinted" + (", eBay" if not args.no_ebay else " (eBay skipped)"), file=sys.stderr)
+    print("Marketplaces: Leboncoin, Vestiaire Collective, Beebs, eBay France", file=sys.stderr)
     print("", file=sys.stderr)
 
-    results = run_counts(brands_with_cat, use_ebay=not args.no_ebay)
+    results = run_counts(brands_with_cat)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Table: group by brand/category, then marketplaces
     brands_seen = set()
-    print("\nBrand (category)     | Leboncoin | Vinted | eBay")
-    print("-" * 55)
+    print("\nBrand (category)     | Leboncoin | Vestiaire |     Beebs |  eBay FR")
+    print("-" * 72)
     for r in results:
         key = (r["brand"], r["category"])
         if key not in brands_seen:
             brands_seen.add(key)
             row_results = {x["marketplace"]: x["count"] for x in results if x["brand"] == r["brand"] and x["category"] == r["category"]}
-            lbc = row_results.get("leboncoin")
-            v = row_results.get("vinted")
-            ebay = row_results.get("ebay")
-            lbc_s = f"{lbc:,}" if lbc is not None else "—"
-            v_s = f"{v:,}" if v is not None else "—"
-            ebay_s = f"{ebay:,}" if ebay is not None else "—"
+            lbc   = row_results.get("leboncoin")
+            vc    = row_results.get("vestiaire")
+            beebs = row_results.get("beebs")
+            ebay  = row_results.get("ebay")
+            lbc_s   = f"{lbc:,}"   if lbc   is not None else "—"
+            vc_s    = f"{vc:,}"    if vc    is not None else "—"
+            beebs_s = f"{beebs:,}" if beebs is not None else "—"
+            ebay_s  = f"{ebay:,}" if ebay is not None else "—"
             label = f"{r['brand']} ({r['category']})"
-            print(f"{label:<20} | {lbc_s:>9} | {v_s:>6} | {ebay_s}")
+            print(f"{label:<20} | {lbc_s:>9} | {vc_s:>9} | {beebs_s:>9} | {ebay_s:>8}")
 
     out = {"timestamp": ts, "brands_kids": BRANDS_KIDS, "brands_women": BRANDS_WOMEN, "results": results}
     if args.output:

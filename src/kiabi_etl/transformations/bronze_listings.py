@@ -1,5 +1,7 @@
 # Bronze: raw data from landing volume (listings + competition JSONL; single path required by cloudFiles).
 # Silver layers filter: listings by source, competition by brand.
+# pathGlobFilter restricts Auto Loader to *.json and *.jsonl only — prevents PDFs, markdown,
+# Python scripts and other non-JSON files from being parsed as garbage rows.
 from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 
@@ -14,6 +16,7 @@ def bronze_listings():
         .option("cloudFiles.schemaLocation", f"{schema_base}/bronze_listings")
         .option("cloudFiles.inferColumnTypes", "true")
         .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
+        .option("pathGlobFilter", "*.{json,jsonl}")
         .load(landing_base)
         .withColumn("_ingested_at", F.current_timestamp())
         .withColumn("_source_file", F.col("_metadata.file_path"))

@@ -10,9 +10,32 @@ resources:
           value: ${workspace.host}
         - name: WAREHOUSE_ID
           value: ${var.warehouse_id}
+        - name: GENIE_SPACE_ID
+          valueFrom: genie-space
 
       resources:
         - name: sql-warehouse
           sql_warehouse:
             id: ${var.warehouse_id}
             permission: CAN_USE
+        - name: llm-endpoint
+          serving_endpoint:
+            name: databricks-claude-sonnet-4-6
+            permission: CAN_QUERY
+        - name: agent-endpoint
+          serving_endpoint:
+            name: mas-0eee0b16-endpoint
+            permission: CAN_QUERY
+        - name: ka-endpoint
+          serving_endpoint:
+            name: ka-35891e54-endpoint
+            permission: CAN_QUERY
+        - name: image-matching-endpoint
+          serving_endpoint:
+            name: kiabi-image-matching
+            permission: CAN_QUERY
+        - name: genie-space
+          genie_space:
+            space_id: ${var.genie_space_id}
+            name: "Kiabi Second-Hand Market Explorer"
+            permission: CAN_RUN
